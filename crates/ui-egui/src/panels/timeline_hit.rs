@@ -17,8 +17,11 @@ use crate::state::Tool;
 /// "Allow Selection tool to choose Roll and Ripple trims without modifier key" is on.
 pub const ROLL_PX: f32 = 2.5;
 
-/// Widest an edge zone gets (px), on each side of a clip edge.
+/// Widest an edge zone gets (px), on each side of a clip edge with mouse pointer.
 pub const EDGE_PX: f32 = 7.0;
+
+/// Widest an edge zone gets (px), on each side of a clip edge with touchscreen / touch mode.
+pub const TOUCH_EDGE_PX: f32 = 20.0;
 
 /// The trim the Selection tool starts at an edit point: Cmd+Shift = roll, Cmd = ripple. With the
 /// Trim setting on (`no_modifier`), no modifier is needed: right on the cut (when a clip is on the
@@ -97,12 +100,17 @@ pub fn marker_at(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<Tick> {
 }
 
 pub fn hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Hit {
+    hit_with_touch(seq, layout, pos, false)
+}
+
+pub fn hit_with_touch(seq: &Sequence, layout: &Layout, pos: Pos2, touch: bool) -> Hit {
     if layout.ruler.contains(pos) {
         return Hit::Ruler;
     }
     if !layout.content.contains(pos) {
         return Hit::None;
     }
+    let edge_max = if touch { TOUCH_EDGE_PX } else { EDGE_PX };
     let Some(row) = layout.row_at(pos.y) else { return Hit::None };
     let Some(tr) = seq.track(row.track) else { return Hit::None };
     for trn in &tr.transitions {
@@ -110,7 +118,7 @@ pub fn hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Hit {
         let x1 = layout.x_of(trn.end());
         if pos.x >= x0 && pos.x <= x1 && pos.y > row.rect.min.y + 17.0 {
             // the ends are edge zones, narrower on a short transition so its middle stays grabbable
-            let zone = EDGE_PX.min((x1 - x0) / 3.0);
+            let zone = edge_max.min((x1 - x0) / 3.0);
             let edge = if pos.x - x0 <= zone {
                 Some(Edge::In)
             } else if x1 - pos.x <= zone {
@@ -121,7 +129,7 @@ pub fn hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Hit {
             return Hit::Transition { track: row.track, id: trn.id, edge };
         }
     }
-    if let Some((clip, edge)) = edge_at(tr, layout, pos.x) {
+    if let Some((clip, edge)) = edge_at_with_zone(tr, layout, pos.x, edge_max) {
         return Hit::Clip { track: row.track, clip, edge: Some(edge) };
     }
     match tr.item_at(layout.tick_at(pos.x)) {
@@ -158,18 +166,23 @@ impl Reach {
 }
 
 /// The edge zone (px, on each side of an edge) of a clip `w` px wide on screen: a third of the
-/// clip, at most [`EDGE_PX`], so the middle third of a narrow clip still moves it. `None` when the
+/// clip, at most `max_px`, so the middle third of a narrow clip still moves it. `None` when the
 /// clip has no usable width (zoomed far out, or a broken zoom): it has no edges then.
-fn zone(w: f32) -> Option<f32> {
-    if w.is_finite() && w > 0.0 { Some(EDGE_PX.min(w / 3.0)) } else { None }
+fn zone(w: f32, max_px: f32) -> Option<f32> {
+    if w.is_finite() && w > 0.0 { Some(max_px.min(w / 3.0)) } else { None }
 }
 
 /// The clip edge on `tr` a pointer at `x` grabs (#259), whatever the order of `tr.items`.
-fn edge_at(tr: &Track, layout: &Layout, x: f32) -> Option<(ClipId, Edge)> {
+#[allow(dead_code)]
+pub(crate) fn edge_at(tr: &Track, layout: &Layout, x: f32) -> Option<(ClipId, Edge)> {
+    edge_at_with_zone(tr, layout, x, EDGE_PX)
+}
+
+pub(crate) fn edge_at_with_zone(tr: &Track, layout: &Layout, x: f32, max_zone: f32) -> Option<(ClipId, Edge)> {
     let mut best: Option<Reach> = None;
     for it in &tr.items {
         let (x0, x1) = (layout.x_of(it.start), layout.x_of(it.end()));
-        let Some(e) = zone(x1 - x0) else { continue };
+        let Some(e) = zone(x1 - x0, max_zone) else { continue };
         // the pointer's distance into the clip from each of its edges
         for (edge, d) in [(Edge::In, x - x0), (Edge::Out, x1 - x)] {
             if !(-e..=e).contains(&d) {
@@ -249,7 +262,11 @@ impl Grab {
 /// tools trim at a clip edge and which trim they start. `roll_ripple` is Settings ▸ Trim ▸ "Allow
 /// Selection tool to choose Roll and Ripple trims without modifier key".
 pub fn grab_at(seq: &Sequence, layout: &Layout, pos: Pos2, tool: Tool, mods: Modifiers, roll_ripple: bool) -> Grab {
-    let h = hit(seq, layout, pos);
+    grab_at_with_touch(seq, layout, pos, tool, mods, roll_ripple, false)
+}
+
+pub fn grab_at_with_touch(seq: &Sequence, layout: &Layout, pos: Pos2, tool: Tool, mods: Modifiers, roll_ripple: bool, touch: bool) -> Grab {
+    let h = hit_with_touch(seq, layout, pos, touch);
     if let Hit::Clip { track, clip, edge: None } = h
         && matches!(tool, Tool::Selection | Tool::Pen)
         && super::timeline_volume::on_line(seq, layout, clip, pos)
@@ -373,6 +390,16 @@ mod tests {
         assert_eq!(hit(&seq, &l, at(303.0)), edge_hit(tr, 2, Edge::In));
         // right on the cut: the later clip
         assert_eq!(hit(&seq, &l, at(300.0)), edge_hit(tr, 2, Edge::In));
+    }
+
+    #[test]
+    fn touch_edge_slop_expands_hit_zone() {
+        let (seq, l, tr) = fixture(clips());
+        // At x = 285.0 (15 px away from cut at 300.0):
+        // Standard mouse hit testing (max 7 px) considers it inside the clip body (edge: None)
+        assert_eq!(hit_with_touch(&seq, &l, at(285.0), false), Hit::Clip { track: tr, clip: ClipId(1), edge: None });
+        // Touch hit testing (max 20 px) considers it an edge trim hit!
+        assert_eq!(hit_with_touch(&seq, &l, at(285.0), true), edge_hit(tr, 1, Edge::Out));
     }
 
     #[test]

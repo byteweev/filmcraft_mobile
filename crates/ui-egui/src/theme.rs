@@ -511,6 +511,35 @@ pub fn apply_visuals(ctx: &egui::Context, t: &Tokens) {
     });
 }
 
+/// Adjusts egui metrics for touch screen and mobile ergonomics: larger tap targets,
+/// wider scrollbars, and increased touch drag thresholds to suppress minor finger wobble.
+pub fn apply_touch_style(ctx: &egui::Context, touch: bool) {
+    ctx.global_style_mut(|s| {
+        if touch {
+            s.spacing.item_spacing = egui::vec2(8.0, 6.0);
+            s.spacing.button_padding = egui::vec2(12.0, 8.0);
+            s.spacing.interact_size.y = 42.0;
+            s.spacing.menu_margin = egui::Margin::same(8);
+            s.spacing.scroll = egui::style::ScrollStyle::solid();
+            s.text_styles.insert(TextStyle::Body, FontId::new(13.0, FontFamily::Proportional));
+            s.text_styles.insert(TextStyle::Button, FontId::new(13.0, FontFamily::Proportional));
+            s.text_styles.insert(TextStyle::Small, FontId::new(11.0, FontFamily::Proportional));
+            s.text_styles.insert(TextStyle::Heading, FontId::new(16.0, FontFamily::Name("semibold".into())));
+            s.text_styles.insert(TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace));
+        } else {
+            s.spacing.item_spacing = egui::vec2(6.0, 4.0);
+            s.spacing.button_padding = egui::vec2(8.0, 3.0);
+            s.spacing.interact_size.y = 24.0;
+            s.spacing.menu_margin = egui::Margin::same(4);
+            s.text_styles.insert(TextStyle::Body, FontId::new(12.0, FontFamily::Proportional));
+            s.text_styles.insert(TextStyle::Button, FontId::new(12.0, FontFamily::Proportional));
+            s.text_styles.insert(TextStyle::Small, FontId::new(11.0, FontFamily::Proportional));
+            s.text_styles.insert(TextStyle::Heading, FontId::new(15.0, FontFamily::Name("semibold".into())));
+            s.text_styles.insert(TextStyle::Monospace, FontId::new(12.0, FontFamily::Monospace));
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,6 +12,10 @@ use crate::theme::Tokens;
 
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
+    if rect.width() < 800.0 {
+        show_mobile_header(app, ui, rect, &t);
+        return;
+    }
     let p = ui.painter().clone();
     p.rect_filled(rect, 0.0, t.header_bg);
     p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, Color32::BLACK));
@@ -180,5 +184,96 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if area.response.clicked_elsewhere() && !(ws_resp.clicked() || wresp.clicked()) {
             ui.ctx().data_mut(|d| d.insert_temp(popup_id, false));
         }
+    }
+}
+
+fn show_mobile_header(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
+    let p = ui.painter().clone();
+    p.rect_filled(rect, 0.0, t.header_bg);
+    p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, Color32::BLACK));
+
+    // Left: Hamburger menu
+    let menu_r = Rect::from_center_size(pos2(rect.min.x + 20.0, rect.center().y), vec2(32.0, 32.0));
+    let menu_resp = ui.interact(menu_r, egui::Id::new("mobile-menu-btn"), Sense::click()).on_hover_text(tl!("Menu"));
+    app.auto.add("header.mobileMenu", menu_r, "Menu");
+    if menu_resp.hovered() {
+        p.rect_filled(menu_r, 4.0, t.hover);
+    }
+    icons::paint(&p, menu_r.shrink(7.0), Icon::Hamburger, if menu_resp.hovered() { t.text } else { t.text_dim });
+
+    let popup_id = egui::Id::new("mobile-menu-popup");
+    if menu_resp.clicked() {
+        let cur = ui.ctx().data(|d| d.get_temp::<bool>(popup_id).unwrap_or(false));
+        ui.ctx().data_mut(|d| d.insert_temp(popup_id, !cur));
+    }
+    let menu_open = ui.ctx().data(|d| d.get_temp::<bool>(popup_id).unwrap_or(false));
+    if menu_open {
+        let anchor = pos2(menu_r.min.x, rect.max.y + 4.0);
+        let area = egui::Area::new(popup_id.with("area")).order(egui::Order::Foreground).fixed_pos(anchor).show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(200.0);
+                crate::menus::menu_bar(app, ui);
+            });
+        });
+        if area.response.clicked_elsewhere() && !menu_resp.clicked() {
+            ui.ctx().data_mut(|d| d.insert_temp(popup_id, false));
+        }
+    }
+
+    // Right action buttons: Touch Mode, Undo, Redo, Quick Export
+    let mut rx = rect.max.x - 8.0;
+    let mut btn = |ui: &mut egui::Ui, icon: Icon, id: &str, tip: &str, accent: bool, app: &mut FilmcraftApp| -> egui::Response {
+        rx -= 34.0;
+        let r = Rect::from_center_size(pos2(rx + 14.0, rect.center().y), vec2(30.0, 30.0));
+        let resp = ui.interact(r, egui::Id::new(("hdr-m", id)), Sense::click()).on_hover_text(tip);
+        app.auto.add(&format!("header.{id}"), r, tip);
+        if accent {
+            p.rect_filled(r, 4.0, t.accent);
+            icons::paint(&p, r.shrink(6.0), icon, Color32::WHITE);
+        } else {
+            if resp.hovered() {
+                p.rect_filled(r, 4.0, t.hover);
+            }
+            icons::paint(&p, r.shrink(6.0), icon, if resp.hovered() { t.text } else { t.text_dim });
+        }
+        resp
+    };
+
+    if btn(ui, Icon::Export, "quickExport", tl!("Quick Export"), false, app).clicked() {
+        app.ui.export.quick_open = !app.ui.export.quick_open;
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("quick-export-toggled"), true));
+    }
+    crate::panels::export_mode::quick_export(app, ui.ctx(), pos2(rect.max.x - 340.0, rect.max.y + 4.0));
+
+    if btn(ui, Icon::Redo, "redo", tl!("Redo"), false, app).clicked() {
+        let _ = app.session.execute("edit.redo", serde_json::json!({}));
+    }
+
+    if btn(ui, Icon::Undo, "undo", tl!("Undo"), false, app).clicked() {
+        let _ = app.session.execute("edit.undo", serde_json::json!({}));
+    }
+
+    let touch_active = app.ui.touch_mode;
+    if btn(ui, Icon::Hand, "touchMode", tl!("Touch Mode"), touch_active, app).clicked() {
+        app.ui.touch_mode = !app.ui.touch_mode;
+        crate::theme::apply_touch_style(ui.ctx(), app.ui.touch_mode);
+    }
+
+    // Title in remaining space
+    let title = if app.session.is_dirty() { tlf!("{name} - Edited", name = app.session.project.name) } else { app.session.project.name.clone() };
+    let left = menu_r.max.x + 8.0;
+    let right = rx - 8.0;
+    if right > left + 30.0 {
+        let mut job = egui::text::LayoutJob::simple_singleline(title, Tokens::ui(13.0), t.tab_text_active);
+        job.wrap.max_width = right - left;
+        job.wrap.max_rows = 1;
+        let galley = p.layout_job(job);
+        let center = (left + right) / 2.0;
+        let half = galley.size().x / 2.0;
+        p.with_clip_rect(Rect::from_min_max(pos2(left, rect.min.y), pos2(right, rect.max.y))).galley(
+            pos2(center - half, rect.center().y - galley.size().y / 2.0),
+            galley,
+            t.tab_text_active,
+        );
     }
 }

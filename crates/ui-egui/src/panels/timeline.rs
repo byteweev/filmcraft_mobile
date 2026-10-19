@@ -22,7 +22,7 @@ use crate::icons::{self, Icon};
 use crate::state::{ThumbnailMode, TimelineView, Tool};
 use crate::theme::Tokens;
 
-use super::timeline_hit::{EdgeKind, Grab, edge_geometry, grab_at, marker_at, marker_range_rect, marker_rect, marker_under_pointer};
+use super::timeline_hit::{EdgeKind, Grab, edge_geometry, grab_at, grab_at_with_touch, marker_at, marker_range_rect, marker_rect, marker_under_pointer};
 pub use super::timeline_hit::{Hit, ROLL_PX, hit, selection_trim_kind};
 
 const TOP_H: f32 = 58.0; // timecode + toolbar (left) / ruler (right)
@@ -2225,6 +2225,7 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
     let roll_ripple = app.session.prefs.trim.selection_tool_roll_ripple;
 
     // ---- what the button went down on (#259): kept from the press frame until it comes up
+    let touch = app.ui.touch_mode;
     if ctx.input(|i| !i.pointer.any_down() && !i.pointer.any_released()) {
         app.tl.pressed = None;
         app.tl.cancelled = false;
@@ -2234,12 +2235,43 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
         && let Some(p) = ctx.input(|i| i.pointer.press_origin())
     {
         app.tl.cancelled = false;
-        let grab = grab_at(seq, layout, p, tool, mods, roll_ripple);
+        let grab = grab_at_with_touch(seq, layout, p, tool, mods, roll_ripple, touch);
         // the playhead jumps to a press on the ruler at once, not only once the pointer has moved (#1090)
         if matches!(grab, Grab::Other(Hit::Ruler)) {
             scrub_playhead(app, seq, layout, p, mods.shift);
         }
         app.tl.pressed = Some(Pressed { pos: p, tick: layout.tick_at(p.x), grab });
+    }
+
+    // ---- multi-touch gestures: pinch to zoom, two-finger pan/scroll on touchscreen
+    if let Some(multi) = ctx.input(|i| i.multi_touch()) {
+        if multi.num_touches >= 2 && rect.contains(multi.center_pos) {
+            if (multi.zoom_delta - 1.0).abs() > 1e-4 {
+                let f = multi.zoom_delta as f64;
+                let anchor_t = layout.tick_at(multi.center_pos.x).seconds();
+                let v = &mut app.ui.timeline;
+                v.target_pps = (v.target_pps * f).clamp(0.05, 24_000.0);
+                app.tl.zoom_anchor = Some((anchor_t, multi.center_pos.x));
+                if app.tl.thumb_pps.is_none() {
+                    app.tl.thumb_pps = Some(v.pps);
+                }
+            }
+            if multi.translation_delta != egui::Vec2::ZERO {
+                let v = &mut app.ui.timeline;
+                if multi.translation_delta.x != 0.0 {
+                    let limit = max_scroll(seq.duration().seconds(), layout.content.width(), v.pps);
+                    v.target_scroll = (v.target_scroll - multi.translation_delta.x as f64 / v.pps).clamp(0.0, limit);
+                    v.scroll = v.target_scroll;
+                }
+                if multi.translation_delta.y != 0.0 {
+                    if multi.center_pos.y < layout.split_y {
+                        v.v_scroll = (v.v_scroll + multi.translation_delta.y).max(0.0);
+                    } else {
+                        v.a_scroll = (v.a_scroll - multi.translation_delta.y).max(0.0);
+                    }
+                }
+            }
+        }
     }
 
     // ---- wheel, as in Premiere Pro on macOS (checked in 26.5.2):
@@ -2287,7 +2319,7 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
         && let Some(p) = pos
         && area.contains(p)
     {
-        let g = grab_at(seq, layout, p, tool, mods, roll_ripple);
+        let g = grab_at_with_touch(seq, layout, p, tool, mods, roll_ripple, touch);
         let blocked = tool == Tool::Selection
             && match g.hit() {
                 Hit::Clip { clip, .. } => {

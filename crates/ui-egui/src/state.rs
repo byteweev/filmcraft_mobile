@@ -426,6 +426,37 @@ pub struct KeyframeRef {
     pub time: filmcraft_time::Tick,
 }
 
+/// Tab displayed in mobile mode's lower pane.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MobileTab {
+    #[default]
+    Timeline,
+    Media,
+    Inspector,
+    Effects,
+    Export,
+}
+
+impl MobileTab {
+    pub const ALL: [MobileTab; 5] = [
+        MobileTab::Timeline,
+        MobileTab::Media,
+        MobileTab::Inspector,
+        MobileTab::Effects,
+        MobileTab::Export,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MobileTab::Timeline => "Timeline",
+            MobileTab::Media => "Media",
+            MobileTab::Inspector => "Inspector",
+            MobileTab::Effects => "Effects",
+            MobileTab::Export => "Export",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UiState {
     #[serde(default)]
@@ -438,6 +469,12 @@ pub struct UiState {
     pub floating: Vec<crate::dock::Floating>,
     /// Focused panel (blue outline, receives shortcuts).
     pub focused: PanelKind,
+    /// Whether touch screen sizing & touch ergonomics are active.
+    #[serde(default)]
+    pub touch_mode: bool,
+    /// Active tab in mobile workspace layout.
+    #[serde(default)]
+    pub mobile_tab: MobileTab,
     pub timeline: TimelineView,
     pub program: MonitorView,
     pub source: MonitorView,
@@ -962,6 +999,8 @@ impl Default for UiState {
             floating: vec![],
             dock: crate::dock::workspace("Editing"),
             focused: PanelKind::Timeline,
+            touch_mode: false,
+            mobile_tab: MobileTab::default(),
             timeline: TimelineView::default(),
             program: MonitorView::default(),
             source: MonitorView::default(),

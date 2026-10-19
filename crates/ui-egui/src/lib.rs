@@ -1776,15 +1776,19 @@ impl FilmcraftApp {
         }
         let t = self.tokens;
         let full = ui.max_rect();
-        ui.painter().rect_filled(full, 0.0, t.app_bg);
-        let header_h = if self.ui.show_header { 38.0 } else { 0.0 };
+        let is_mobile = full.width() < 800.0 || self.ui.workspace == "Mobile";
+        if self.ui.touch_mode || is_mobile {
+            theme::apply_touch_style(&ctx, true);
+        }
+        let header_h = if self.ui.show_header { if is_mobile { 44.0 } else { 38.0 } } else { 0.0 };
         let header = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), header_h));
         if self.ui.show_header {
             header::show(self, ui, header);
         }
-        let status_h = if self.ui.show_status_bar { 20.0 } else { 0.0 };
+        let status_h = if self.ui.show_status_bar && !is_mobile { 20.0 } else { 0.0 };
         let body = egui::Rect::from_min_max(egui::pos2(full.min.x + 1.0, header.max.y + 1.0), egui::pos2(full.max.x - 1.0, full.max.y - status_h - 2.0));
         match self.ui.mode {
+            state::Mode::Edit if is_mobile => panels::mobile::show(self, ui, body),
             state::Mode::Edit => self.dock_area(ui, body),
             state::Mode::Import => panels::import_mode::show(self, ui, body),
             state::Mode::Export => panels::export_mode::show(self, ui, body),

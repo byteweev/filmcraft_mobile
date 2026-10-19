@@ -360,6 +360,45 @@ pub fn picture_rect(area: Rect, fw: f32, fh: f32, v: &MonitorView, ppp: f32) -> 
 /// Hand tool, pans a magnified picture. `fw` is the picture's width in frame pixels.
 pub fn zoom_pan_input(app: &mut FilmcraftApp, ui: &mut egui::Ui, w: Which, area: Rect, pic: Rect, fw: f32, ppp: f32) {
     let ctx = ui.ctx().clone();
+    // Multi-touch gestures on touchscreen (pinch-to-zoom and two-finger pan)
+    if let Some(multi) = ctx.input(|i| i.multi_touch()) {
+        if multi.num_touches >= 2 && area.contains(multi.center_pos) {
+            let f = multi.zoom_delta;
+            if (f - 1.0).abs() > 1e-4 && pic.width() > 0.0 && fw > 0.0 {
+                let cur = pic.width() * ppp / fw;
+                let z = (cur * f).clamp(ZOOMS[0].1, ZOOMS[ZOOMS.len() - 1].1);
+                let k = z / cur;
+                let centre = multi.center_pos - (multi.center_pos - pic.center()) * k;
+                let max = ((pic.size() * k - area.size()) / 2.0).max(Vec2::ZERO);
+                let v = view_mut(app, w);
+                v.zoom = Some(z);
+                v.pan = [(centre.x - area.center().x).clamp(-max.x, max.x), (centre.y - area.center().y).clamp(-max.y, max.y)];
+            }
+            if multi.translation_delta != Vec2::ZERO {
+                let d = multi.translation_delta;
+                let max = ((pic.size() - area.size()) / 2.0).max(Vec2::ZERO);
+                let v = view_mut(app, w);
+                v.pan = [(v.pan[0] + d.x).clamp(-max.x, max.x), (v.pan[1] + d.y).clamp(-max.y, max.y)];
+            }
+            return;
+        }
+    }
+
+    // Double tap / double click to toggle Fit vs 100%
+    let tap_id = egui::Id::new((prefix(w), "monitor-tap"));
+    let tap_resp = ui.interact(area, tap_id, Sense::click());
+    if tap_resp.double_clicked() {
+        let v = view_mut(app, w);
+        if v.zoom.is_some() {
+            v.zoom = None;
+            v.pan = [0.0, 0.0];
+        } else {
+            v.zoom = Some(1.0);
+            v.pan = [0.0, 0.0];
+        }
+        return;
+    }
+
     if ui.rect_contains_pointer(area)
         && let Some(p) = ctx.pointer_hover_pos()
     {
